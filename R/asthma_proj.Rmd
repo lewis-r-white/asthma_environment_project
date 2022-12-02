@@ -1,5 +1,5 @@
 ---
-title: "Asthma in California"
+title: "Does Air Quality Affect Hospitalizations from Asthma in California?"
 author: "Lewis White"
 date: "2022-11-11"
 output: html_document
@@ -9,6 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Loading Packages
 
 ```{r}
 #LOADING PACKAGES
@@ -20,15 +21,21 @@ library(purrr)
 library(fs)
 library(sf)
 library(tmap)
+library(dplyr)
+library(broom)
+library(MASS)
+library(ggbeeswarm)
+library(ggpubr)
 ```
 
+## Reading in the Data
 
 ```{r}
 #READING IN THE DATA
 
 #hospitalizations by county
 hospitalizations <- read_csv(here("data", "asthma_hospitalizations.csv")) %>%
-  clean_names() 
+  clean_names()
 
 #asthma prevalence by county
 asthma_prevalence <- read_csv(here("data", "asthma_prevalence.csv")) %>%
@@ -37,7 +44,6 @@ asthma_prevalence <- read_csv(here("data", "asthma_prevalence.csv")) %>%
 #country demographic info
 county_demographics <- read_csv(here("data", "county_demographics.csv")) %>%
   clean_names() 
-
 
 #creating a list of the county yearly aqi data files 
 aqi_files <- list.files(path = here("data"), pattern="annual_aqi*", full.names=TRUE, recursive=FALSE)
@@ -55,7 +61,14 @@ california_aqi <- aqi_files %>%
 county_shapes <- read_sf(here("data", "CA_Counties", "CA_Counties_TIGER2016.shp")) %>%
   clean_names() 
 
+
+#smoke pm2 data
+smoke <- read_csv(here("data", "smoke_pm2_data.csv"))
+
+
 ```
+
+## Cleaning the Data
 
 ```{r}
 #CLEAN THE DATA
@@ -64,22 +77,23 @@ county_shapes <- read_sf(here("data", "CA_Counties", "CA_Counties_TIGER2016.shp"
 hosp_clean <- hospitalizations %>%
   filter(strata == "Total population",
          county != "California") %>%
-  select(county, year, number_of_hospitalizations, age_adjusted_hospitalization_rate)
+  dplyr::select(county, year, number_of_hospitalizations, age_adjusted_hospitalization_rate) 
+
 
 
 #filter to desired rows/columns from hospitalizations dataset
 asthma_prev_clean <- asthma_prevalence %>%
-  select(county:comment) %>%
+  dplyr::select(county:comment) %>%
   filter(strata == "Total population",
          county != "California") %>%
-  select(county, years, current_prevalence) %>%
+  dplyr::select(county, years, current_prevalence) %>%
   mutate(current_prevalence = as.numeric(str_remove(current_prevalence, "%"))) #adjust percent variable to be numeric so it can be more easily used in analysis 
   
 
 #filter rows, select columns, adjust columns, and create new columns in the demographics dataset. The race specific demographic info is an estimate for the overall 2010 to 2020 decade. 
 county_dem_clean <- county_demographics %>%
   filter(state == "CA") %>%
-  select(county,
+  dplyr::select(county,
          ethnicities_american_indian_and_alaska_native_alone:ethnicities_white_alone_not_hispanic_or_latino,
          income_median_houseold_income, #median income 12 month median income collected from 2015 to 2019
          population_2020_population, population_population_per_square_mile) %>%
@@ -88,111 +102,114 @@ county_dem_clean <- county_demographics %>%
          "pop_density_sq_m" = "population_population_per_square_mile") %>%
   mutate(percent_poc = ethnicities_american_indian_and_alaska_native_alone + ethnicities_asian_alone + ethnicities_black_alone + ethnicities_hispanic_or_latino + ethnicities_native_hawaiian_and_other_pacific_islander_alone + ethnicities_two_or_more_races) %>% #For future analysis, I created a percent person of color variable to see whether asthma prevalence/hospitalizations was related to minority group status. 
   mutate(county = str_remove(county, " County")) %>%
-  select(!ethnicities_american_indian_and_alaska_native_alone:ethnicities_white_alone_not_hispanic_or_latino)
+  dplyr::select(!ethnicities_american_indian_and_alaska_native_alone:ethnicities_white_alone_not_hispanic_or_latino)
 
 
 #select columns of interest and create new columns for aqi data
 cali_aqi_clean <- california_aqi %>%
-  select(-state, -(days_co:days_pm10)) %>%
+  dplyr::select(-state, -(days_co:days_pm10)) %>%
   mutate(good_or_moderate = good_days + moderate_days,
          unhealthy_or_worse = unhealthy_days + very_unhealthy_days + hazardous_days,
-         percent_unhealthy_or_worse_days = (unhealthy_or_worse / days_with_aqi)*100) 
+         unhealthy_or_worse_per365 = (unhealthy_or_worse / days_with_aqi)*365) 
 
 
 #select column for geospatial data and rename county column to match other datasets
 county_shape_clean <- county_shapes %>%
-  select(name) %>%
+  dplyr::select(name) %>%
   rename("county" = "name")
 
 
-#remove full data sets from environment to make calling the clean datasets easier 
-rm(hospitalizations, asthma_prevalence, county_demographics, county_shapes, county_demographics)
+smoke_clean <- smoke %>%
+  mutate(GEOID = as.numeric(GEOID)) %>%
+  filter(GEOID > 6000,
+         GEOID < 6116) %>%
+  mutate(GEOID = as.character(GEOID)) %>%
+  mutate(GEOID = paste0("0", GEOID)) %>%
+  mutate(date = lubridate::ymd(date)) %>%
+  mutate(year(date))
+
+smoke_clean_2015_to_2019 <- smoke_clean %>%
+  filter(date > '2014-12-31',
+         date < '2020-01-01') %>%
+  rename("year" = "year(date)")
+
+smoke_year_summaries <- smoke_clean_2015_to_2019 %>%
+  group_by(GEOID, year) %>%
+  summarize(mean_smokePM = mean(smokePM_pred),
+            third_quartile_smoke_PM = quantile(smokePM_pred, 0.75),
+            max_smoke_PM = max(smokePM_pred)) %>%
+  left_join(county_shapes, by = c("GEOID" = "geoid")) %>%
+  st_drop_geometry() %>%
+  dplyr::select(GEOID, year, mean_smokePM, third_quartile_smoke_PM, 
+                max_smoke_PM, name, namelsad) %>%
+  rename("county" = "name")
+
+
 ```
 
+## Joining Data
 
 ```{r}
 # JOIN DATASETS FOR ANALYSIS
 
 #add aqi and demographic data to the hospitalizations data set
 hosp_full <- left_join(hosp_clean, cali_aqi_clean) %>%
+  left_join(smoke_year_summaries) %>%
   left_join(county_dem_clean) %>%
-  mutate(percent_hosp_rate = (number_of_hospitalizations / pop2020)*100) %>%
-  mutate(max_aqi = replace(max_aqi, max_aqi > 500, 500)) #since the EPA's AQI qualitative scale peaks at 500, I adjusted AQI values above 500 to just be 500. 
+  mutate(hosp_per_100k = (number_of_hospitalizations / pop2020) * 100000) %>%
+  mutate(max_aqi = replace(max_aqi, max_aqi > 500, 500)) #since the EPA's AQI qualitative scale peaks at 500, I adjusted AQI values above 500 to just be 500 
 
 ```
 
+## Checking Assumptions for Linear Regression
 
+The hospitalization rate (per 100,000 people) will be used as the outcome variable for this model. It is important to note that an individual could be hospitalized more than once. Additionally, individuals may have traveled to a county and been hospitalized there, which would affect the
+
+For each variable of interest, I created a basic plot to see whether the relationship looks linear, and transformed any variables that didn't. I then made a simple linear model using predictor of interest. Finally, I created a residual plot to make sure the errors were randomly distributed.
 
 ```{r}
 ##BASIC VISUALIZATION TO CHECK LINEAR REGRESSION ASSUMPTIONS
 
-# I will be using the percentage of people hospitalized for asthma as my outcome variable. It is important to note that an individual could be hospitalized more than once, so this does not imply that a unique percentage of the county was hospitalized for asthma related reasons. 
-
-#for each variable of interest, I created a basic plot to see whether the relationship looks linear, and transformed any variables that didn't. I then made a simple linear model using predictor of interest. Finally, I created a residual plot to make sure the errors were randomly distributed. 
-
-
-
-#unhealthy aqi days on percent hosp rate
-ggplot(data = hosp_full, aes(x = percent_unhealthy_or_worse_days, y = percent_hosp_rate)) +
-  geom_point()  
-
-pct_bad_air_model <- lm(percent_hosp_rate ~ percent_unhealthy_or_worse_days, data = hosp_full)
-
-summary(pct_bad_air_model)
-
-res <- resid(pct_bad_air_model)
-
-plot(fitted(pct_bad_air_model), res) +
-  abline(0,0)
-
 
 #median aqi on percent hosp rate
-ggplot(data = hosp_full, aes(x = median_aqi, y = percent_hosp_rate)) +
-  geom_point()  
+ggplot(data = hosp_full, aes(x = median_aqi, y = hosp_per_100k)) +
+  geom_point()
+#looks fairly linear but appears to be plateauing (or even starting to trend downwards) for the highest median aqi values. 
 
-median_aqi_model <- lm(percent_hosp_rate ~ median_aqi, data = hosp_full)
+median_aqi_model <- lm(hosp_per_100k ~ median_aqi, data = hosp_full)
 
 summary(median_aqi_model)
 
 res <- resid(median_aqi_model)
 
 plot(fitted(median_aqi_model), res) +
-  abline(0,0)
+  abline(0,0)  #positive residuals are more extreme than negative residuals. It looks like the model is linear until about 62 median aqi, at which point it plateaus out. 
 
 
 
-
-#max aqi on percent hosp rate
-ggplot(data = hosp_full, aes(x = log(max_aqi), y = percent_hosp_rate)) +
+#log max aqi on percent hosp rate
+ggplot(data = hosp_full, aes(x = log(max_aqi), y = hosp_per_100k)) +
   geom_point()
 
-max_aqi_mod <- lm(percent_hosp_rate ~ log(max_aqi), data = hosp_full)
+max_aqi_mod <- lm(hosp_per_100k ~ log(max_aqi), data = hosp_full)
+
+summary(max_aqi_mod)
 
 res <- resid(max_aqi_mod)
 
 plot(fitted(max_aqi_mod), res) +
-  abline(0,0)
+  abline(0,0) # appears fairly linear, although the residuals in the middle are more extreme than at the ends. Proceed with caution. 
 
 
 
-# percent poc on percent hosp rate (maybe requires further transformation)
-ggplot(data = hosp_full, aes(x = percent_poc, y = percent_hosp_rate)) +
-  geom_point()
-
-pct_poc_mod <- lm(percent_hosp_rate ~ percent_poc, data = hosp_full)
-
-res <- resid(pct_poc_mod)
-
-plot(fitted(pct_poc_mod), res) +
-  abline(0,0)
 
 
 
 # pop density on hosp rate
-ggplot(data = hosp_full, aes(x = log(pop_density_sq_m), y = percent_hosp_rate)) +
+ggplot(data = hosp_full, aes(x = log(pop_density_sq_m), y = hosp_per_100k)) +
   geom_point()
 
-pop_density_mod <- lm(percent_hosp_rate ~ log(pop_density_sq_m), data = hosp_full)
+pop_density_mod <- lm(hosp_per_100k ~ log(pop_density_sq_m), data = hosp_full)
 
 res <- resid(pop_density_mod)
 
@@ -202,48 +219,117 @@ plot(fitted(pop_density_mod), res) +
 
 
 ## median income on hosp
-ggplot(data = hosp_full, aes(x = median_income, y = percent_hosp_rate)) +
+ggplot(data = hosp_full, aes(x = median_income, y = hosp_per_100k)) +
   geom_point()
 
-income_mod <- lm(percent_hosp_rate ~ median_income, data = hosp_full)
+income_mod <- lm(hosp_per_100k ~ median_income, data = hosp_per_100k)
 
 res <- resid(income_mod)
 
 plot(fitted(income_mod), res) +
-  abline(0,0)
-
-
-# max and median aqis to check for collinearity 
-ggplot(data = hosp_full, aes(x = median_aqi, y = max_aqi)) +
-  geom_point() 
+  abline(0,0)  # a little bit of fanning ~ proceed with caution
 
 
 
+## mean PM 2.5 from fire
+ggplot(data = hosp_full, aes(x = sqrt(mean_smokePM), y = hosp_per_100k)) +
+  geom_point()
 
+smoke_mod <- lm(hosp_per_100k ~ sqrt(mean_smokePM), data = hosp_full)
+
+summary(smoke_mod)
+
+res <- resid(smoke_mod)
+
+plot(fitted(smoke_mod), res) +
+  abline(0,0)  # a little bit of fanning ~ proceed with caution
+
+
+
+#unhealthy aqi days on percent hosp rate
+ggplot(data = hosp_full, aes(x = unhealthy_or_worse_per365, y = hosp_per_100k)) +
+  geom_point() # appears to be somewhat linear with a slope very close to 0. 
+
+pct_bad_air_model <- lm(hosp_per_100k ~ unhealthy_or_worse_per365, data = hosp_full)
+
+summary(pct_bad_air_model)
+
+res <- resid(pct_bad_air_model)
+
+plot(fitted(pct_bad_air_model), res) +
+  abline(0,0) #most points are on the lower side for unhealthy or worse days per 365 days. Aside from that, residuals appear to have random distribution. Proceed with caution. 
+
+```
+
+## Deciding on a Model by Hand
+
+```{r}
 # Multiple regression models  
 
-summary(lm(percent_hosp_rate ~ log(max_aqi) + percent_poc + median_income + percent_unhealthy_or_worse_days + median_aqi + log(pop_density_sq_m), data = hosp_full))
+#largest model
+summary(lm(hosp_per_100k ~ log(max_aqi) + median_income + unhealthy_or_worse_per365 + median_aqi + log(pop_density_sq_m) + sqrt(mean_smokePM) + max_smoke_PM, data = hosp_full))
 
-summary(lm(percent_hosp_rate ~ log(max_aqi) + percent_poc + median_income + percent_unhealthy_or_worse_days + log(pop_density_sq_m), data = hosp_full))
+#taking out unhealthy_or_worse_per265 and max_smoke_PM
+summary(lm(hosp_per_100k ~ log(max_aqi) + median_income + median_aqi + log(pop_density_sq_m) + sqrt(mean_smokePM), data = hosp_full))
 
-summary(lm(percent_hosp_rate ~ log(max_aqi) + percent_poc + median_income + log(pop_density_sq_m), data = hosp_full))
+#taking out median_aqi as well
+summary(lm(hosp_per_100k ~ log(max_aqi) + median_income + log(pop_density_sq_m) + sqrt(mean_smokePM), data = hosp_full))
 
+#all variables were significant at this point. The effect of median_income appears quite minimal, but still highly significant. This model obtains the highest adjusted R-squared value as well. 
+```
 
+## Comparing my initial model selection to a model selection function
+
+```{r}
 # stepwise multiple regression model
 
-null.lm <- lm(percent_hosp_rate ~ 1, data = hosp_full)
+null.lm <- lm(hosp_per_100k ~ 1, data = hosp_full)
 
-full.lm <- lm(percent_hosp_rate ~ log(max_aqi) + percent_poc + median_income + percent_unhealthy_or_worse_days + median_aqi + log(pop_density_sq_m), data = hosp_full)
+full.lm <- lm(hosp_per_100k ~ log(max_aqi) + median_income + unhealthy_or_worse_per365 + median_aqi + log(pop_density_sq_m) + mean_smokePM + max_smoke_PM, data = hosp_full)
 
+MASS::stepAIC(full.lm, scope = list(lower = null.lm, upper = full.lm), direction = "backward", k = log(60))  #Use backward elimination process to determine which variables are relevant
 
-
-library(MASS)
-
-stepAIC(full.lm, scope = list(lower = null.lm, upper = full.lm), direction = "backward", k = log(60))  #Use backward elimination process to determine which variables are relevant
+#                        Df Sum of Sq   RSS    AIC
+# <none>                               52785 1354.2
+# mean_smokePM           1    2245.3 55031 1360.5
+# log(max_aqi)           1    5044.3 57830 1372.9
+# log(pop_density_sq_m)  1    7675.0 60460 1384.0
+# median_income          1    8856.1 61641 1388.8
 
 
 ```
 
+## Checking Predictions 
+```{r}
+final_model <- lm(hosp_per_100k ~ log(max_aqi) + median_income + log(pop_density_sq_m) + sqrt(mean_smokePM), data = hosp_full)
+
+predictions <- augment(final_model)
+
+ggplot(data = predictions, mapping = aes(x = .fitted, y = hosp_per_100k)) +
+  geom_point() +
+  geom_abline(slope = 1, color = "red", lwd = 1) +
+  xlim(20, 70) +
+  annotate("text",
+           x = 67, 
+           y = 83, 
+           label = "Line of perfect",
+           color = "red",
+           size = 3.5) +
+  annotate("text",
+           x = 67,
+           y = 79,
+           label = "predictions",
+           color = "red",
+           size = 3.5) +
+  labs(x = "Predicted Hospitalizations (per 100k)",
+       y = "True Hospitalizations (per 100k)",
+       title = "Comparing our model predictions to the true value of hospitalizations",
+       subtitle = "The model trends in the right direction, but tends to over predict low hospitalization rates and underpredict low hospitalization rates. A perfect model would follow the line in red.") +
+  theme_classic()
+```
+
+
+## Joining the spatial data so spatial plots can be made
 
 ```{r}
 ## Joining the spatial data so spatial plots can be made
@@ -254,9 +340,11 @@ hosp_full_spatial <- hosp_full %>%
 
 hosp_year_summaries <- hosp_full %>%
   group_by(county) %>%
-  summarise(mean_hosp = mean(percent_hosp_rate, na.rm = TRUE),
+  summarise(mean_hosp = mean(hosp_per_100k, na.rm = TRUE),
             mean_max_aqi = mean(max_aqi, na.rm = TRUE),
-            mean_median_aqi = mean(median_aqi, na.rm = TRUE)) %>%
+            mean_median_aqi = mean(median_aqi, na.rm = TRUE),
+            mean_smoke = mean(mean_smokePM, na.rm = TRUE),
+            max_smoke = max(max_smoke_PM, na.rm = TRUE)) %>%
   left_join(county_shape_clean) %>%
   st_as_sf()
 
@@ -272,18 +360,27 @@ asthma_prev_spatial_2017_2018 <- asthma_prev_spatial %>%
   filter(years == "2017–2018")
 ```
 
+## Mapping Variables
 
 ```{r}
 ### Basic spatial plots
 
 tm_shape(hosp_year_summaries) +
-  tm_polygons(col = "mean_hosp")
+  tm_polygons(col = "mean_hosp",
+              title = "Mean hospitalization rate (per 100,000)") +
+  tm_layout(main.title = "Hospitalization Rate from Asthma between 2015–2019 for California Counies") 
 
 tm_shape(hosp_year_summaries) +
-  tm_polygons(col = "mean_max_aqi")
+  tm_polygons(col = "mean_median_aqi",
+              title = "Median AQI") +
+  tm_layout(main.title = "The Median AQI from 2015–2019 for California Counties") 
+  
 
 tm_shape(hosp_year_summaries) +
-  tm_polygons(col = "mean_median_aqi")
+  tm_polygons(col = "mean_smoke",
+              title = "Mean Smoke (in PM 2.5)") +
+  tm_layout(main.title = "The Average Amount of Particulate Matter from Smoke between 2015–2019 for California Counties") 
+
 
 tm_shape(asthma_prev_spatial_2015_2016) +
   tm_polygons(col = "current_prevalence")
@@ -292,10 +389,6 @@ tm_shape(asthma_prev_spatial_2017_2018) +
   tm_polygons(col = "current_prevalence")
 
 ```
-
-
-
-
 
 $\alpha = 0.05$
 
@@ -310,17 +403,50 @@ $H_A:\mu_{hosp2018} - \mu_{hosp2016} \neq 0$
 #2018: 	1,975,086 burnt
 
 hosp_2016_2018 <- hosp_full %>%
-  filter(year == 2016 | year == 2018)
+  filter(year == 2016 | year == 2018) %>%
+  mutate(year = as.factor(year))
   
-t.test(percent_hosp_rate ~ year, data = hosp_2016_2018)
+t.test(hosp_per_100k ~ year, data = hosp_2016_2018)
+
+
+beeswarm_boxplot <- ggplot(data = hosp_2016_2018, mapping = aes(x = year, y = hosp_per_100k)) +
+  geom_beeswarm() + 
+  geom_boxplot(alpha = 0.3) +
+  theme_classic() +
+  labs(x = "Year",
+       y = "Hospitalizations (per 100k)",
+       title = "California County Hospitalization Rate from Asthma in 2016 and 2018",
+       subtitle = "The distribution of hospitalization rates appear similar from 2016 and 2018")
+
+beeswarm_boxplot + 
+  stat_compare_means(method = "t.test", label.x = 1.35, label.y = 65)
+
 ```
 
-My p-value of 0.85 indicates that based on this data, there is not enough evidence to conclude that there was a statistically significant difference in the mean hospitalization rate between 2016 and 2018. 
+My p-value of 0.85 indicates that based on this data, there is not enough evidence to conclude that there was a statistically significant difference in the mean hospitalization rate between 2016 and 2018.
 
-However, it is important to note that this result does not mean that the total acreage of wildfires burnt has no effect on asthma hospitalizations. It's possible that the location of the fire and other factors, such as wind patterns and population density near the fire, are affecting the result. Further research could look into the spatial relationship between fires and where asthma related hospitalizations occur. 
-
-
+However, it is important to note that this result does not mean that the total acreage of wildfires burnt has no effect on asthma hospitalizations. It's possible that the location of the fire and other factors, such as wind patterns and population density near the fire, are affecting the result. Further research could look into the spatial relationship between fires and where asthma related hospitalizations occur.
 
 
 
+
+
+
+## Code Graveyard 
+
+```{r}
+# percent poc on percent hosp rate (maybe requires further transformation)
+ggplot(data = hosp_full, aes(x = (percent_poc), y = hosp_per_100k)) +
+  geom_point() +
+  geom_smooth()
+
+pct_poc_mod <- lm(hosp_per_100k ~ percent_poc, data = hosp_full)
+
+summary(pct_poc_mod)
+
+res <- resid(pct_poc_mod)
+
+plot(fitted(pct_poc_mod), res) +
+  abline(0,0)  #looks slightly exponential. Probably can't proceed. 
+```
 
