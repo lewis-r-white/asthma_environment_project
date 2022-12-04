@@ -26,6 +26,8 @@ library(broom)
 library(MASS)
 library(ggbeeswarm)
 library(ggpubr)
+library(sjPlot)
+library(magick)
 ```
 
 ## Reading in the Data
@@ -64,8 +66,6 @@ county_shapes <- read_sf(here("data", "CA_Counties", "CA_Counties_TIGER2016.shp"
 
 #smoke pm2 data
 smoke <- read_csv(here("data", "smoke_pm2_data.csv"))
-
-
 ```
 
 ## Cleaning the Data
@@ -100,6 +100,7 @@ county_dem_clean <- county_demographics %>%
   rename("median_income" = "income_median_houseold_income",
          "pop2020" = "population_2020_population",
          "pop_density_sq_m" = "population_population_per_square_mile") %>%
+  mutate(median_income_in_thousands = median_income / 1000) %>%
   mutate(percent_poc = ethnicities_american_indian_and_alaska_native_alone + ethnicities_asian_alone + ethnicities_black_alone + ethnicities_hispanic_or_latino + ethnicities_native_hawaiian_and_other_pacific_islander_alone + ethnicities_two_or_more_races) %>% #For future analysis, I created a percent person of color variable to see whether asthma prevalence/hospitalizations was related to minority group status. 
   mutate(county = str_remove(county, " County")) %>%
   dplyr::select(!ethnicities_american_indian_and_alaska_native_alone:ethnicities_white_alone_not_hispanic_or_latino)
@@ -187,6 +188,9 @@ plot(fitted(median_aqi_model), res) +
 
 
 
+
+
+
 #log max aqi on percent hosp rate
 ggplot(data = hosp_full, aes(x = log(max_aqi), y = hosp_per_100k)) +
   geom_point()
@@ -199,10 +203,6 @@ res <- resid(max_aqi_mod)
 
 plot(fitted(max_aqi_mod), res) +
   abline(0,0) # appears fairly linear, although the residuals in the middle are more extreme than at the ends. Proceed with caution. 
-
-
-
-
 
 
 # pop density on hosp rate
@@ -219,16 +219,17 @@ plot(fitted(pop_density_mod), res) +
 
 
 ## median income on hosp
-ggplot(data = hosp_full, aes(x = median_income, y = hosp_per_100k)) +
+ggplot(data = hosp_full, aes(x = median_income_in_thousands, y = hosp_per_100k)) +
   geom_point()
 
-income_mod <- lm(hosp_per_100k ~ median_income, data = hosp_per_100k)
+income_mod <- lm(hosp_per_100k ~ median_income_in_thousands, data = hosp_full)
 
 res <- resid(income_mod)
 
 plot(fitted(income_mod), res) +
   abline(0,0)  # a little bit of fanning ~ proceed with caution
 
+hist(res)
 
 
 ## mean PM 2.5 from fire
@@ -243,6 +244,7 @@ res <- resid(smoke_mod)
 
 plot(fitted(smoke_mod), res) +
   abline(0,0)  # a little bit of fanning ~ proceed with caution
+
 
 
 
@@ -267,15 +269,29 @@ plot(fitted(pct_bad_air_model), res) +
 # Multiple regression models  
 
 #largest model
-summary(lm(hosp_per_100k ~ log(max_aqi) + median_income + unhealthy_or_worse_per365 + median_aqi + log(pop_density_sq_m) + sqrt(mean_smokePM) + max_smoke_PM, data = hosp_full))
+summary(lm(hosp_per_100k ~ log(max_aqi) + median_income_in_thousands + unhealthy_or_worse_per365 + median_aqi + log(pop_density_sq_m) + sqrt(mean_smokePM) + max_smoke_PM, data = hosp_full))
 
 #taking out unhealthy_or_worse_per265 and max_smoke_PM
-summary(lm(hosp_per_100k ~ log(max_aqi) + median_income + median_aqi + log(pop_density_sq_m) + sqrt(mean_smokePM), data = hosp_full))
+summary(lm(hosp_per_100k ~ log(max_aqi) + median_income_in_thousands + median_aqi + log(pop_density_sq_m) + sqrt(mean_smokePM), data = hosp_full))
 
 #taking out median_aqi as well
-summary(lm(hosp_per_100k ~ log(max_aqi) + median_income + log(pop_density_sq_m) + sqrt(mean_smokePM), data = hosp_full))
+summary(lm(hosp_per_100k ~ log(max_aqi) + median_income_in_thousands + log(pop_density_sq_m) + sqrt(mean_smokePM), data = hosp_full))
 
 #all variables were significant at this point. The effect of median_income appears quite minimal, but still highly significant. This model obtains the highest adjusted R-squared value as well. 
+
+
+asthma_mod <- lm(hosp_per_100k ~ log(max_aqi) + sqrt(mean_smokePM) + log(pop_density_sq_m) + median_income_in_thousands, data = hosp_full)
+
+asthma_hosp_table <- tab_model(asthma_mod,
+          pred.labels = c("Intercept", "Log Max Aqi", "SQRT Mean Smoke", 
+                          "Log Pop Density", "Median Income (in $1000s)"),
+          dv.labels = c("Hospitalization Rate (per 100k)"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-value",
+          title = "Table 1. Linear Model Results",
+          digits = 4)
+
+
 ```
 
 ## Comparing my initial model selection to a model selection function
@@ -285,23 +301,23 @@ summary(lm(hosp_per_100k ~ log(max_aqi) + median_income + log(pop_density_sq_m) 
 
 null.lm <- lm(hosp_per_100k ~ 1, data = hosp_full)
 
-full.lm <- lm(hosp_per_100k ~ log(max_aqi) + median_income + unhealthy_or_worse_per365 + median_aqi + log(pop_density_sq_m) + mean_smokePM + max_smoke_PM, data = hosp_full)
+full.lm <- lm(hosp_per_100k ~ log(max_aqi) + median_income_in_thousands + median_aqi + log(pop_density_sq_m) + sqrt(mean_smokePM) + max_smoke_PM, data = hosp_full)
 
 MASS::stepAIC(full.lm, scope = list(lower = null.lm, upper = full.lm), direction = "backward", k = log(60))  #Use backward elimination process to determine which variables are relevant
 
-#                        Df Sum of Sq   RSS    AIC
-# <none>                               52785 1354.2
-# mean_smokePM           1    2245.3 55031 1360.5
-# log(max_aqi)           1    5044.3 57830 1372.9
-# log(pop_density_sq_m)  1    7675.0 60460 1384.0
-# median_income          1    8856.1 61641 1388.8
+#                             Df  Sum of Sq   RSS  AIC
+# None                                     52845 1354.5
+#- sqrt(mean_smokePM)          1    2185.9 55031 1360.5
+#- log(max_aqi)                1    4901.1 57746 1372.5
+#- log(pop_density_sq_m)       1    7325.9 60171 1382.8
+#- median_income_in_thousands  1    8684.8 61530 1388.3
 
 
 ```
 
 ## Checking Predictions 
 ```{r}
-final_model <- lm(hosp_per_100k ~ log(max_aqi) + median_income + log(pop_density_sq_m) + sqrt(mean_smokePM), data = hosp_full)
+final_model <- lm(hosp_per_100k ~ log(max_aqi) + median_income_in_thousands + log(pop_density_sq_m) + sqrt(mean_smokePM), data = hosp_full)
 
 predictions <- augment(final_model)
 
@@ -344,7 +360,10 @@ hosp_year_summaries <- hosp_full %>%
             mean_max_aqi = mean(max_aqi, na.rm = TRUE),
             mean_median_aqi = mean(median_aqi, na.rm = TRUE),
             mean_smoke = mean(mean_smokePM, na.rm = TRUE),
-            max_smoke = max(max_smoke_PM, na.rm = TRUE)) %>%
+            max_smoke = max(max_smoke_PM, na.rm = TRUE),
+            mean_income = mean(median_income_in_thousands, na.rm = TRUE),
+            mean_pop_density = mean(pop_density_sq_m, na.rm = TRUE)) %>%
+  mutate(log_pop_density = log(mean_pop_density)) %>%
   left_join(county_shape_clean) %>%
   st_as_sf()
 
@@ -365,30 +384,248 @@ asthma_prev_spatial_2017_2018 <- asthma_prev_spatial %>%
 ```{r}
 ### Basic spatial plots
 
-tm_shape(hosp_year_summaries) +
+hosp_map <- tm_shape(hosp_year_summaries) +
   tm_polygons(col = "mean_hosp",
               title = "Mean hospitalization rate (per 100,000)") +
   tm_layout(main.title = "Hospitalization Rate from Asthma between 2015–2019 for California Counies") 
 
-tm_shape(hosp_year_summaries) +
+median_aqi_map <- tm_shape(hosp_year_summaries) +
   tm_polygons(col = "mean_median_aqi",
               title = "Median AQI") +
   tm_layout(main.title = "The Median AQI from 2015–2019 for California Counties") 
   
 
-tm_shape(hosp_year_summaries) +
+mean_smoke_map <- tm_shape(hosp_year_summaries) +
   tm_polygons(col = "mean_smoke",
               title = "Mean Smoke (in PM 2.5)") +
   tm_layout(main.title = "The Average Amount of Particulate Matter from Smoke between 2015–2019 for California Counties") 
 
 
-tm_shape(asthma_prev_spatial_2015_2016) +
+pop_density_map <- tm_shape(hosp_year_summaries) +
+  tm_polygons(col = "mean_pop_density",
+              title = "Mean Population Density (people/mi^2") +
+  tm_layout(main.title = "The Population Density for California Counties") 
+#maybe normalize for san francisco...
+
+
+median_income_map <- tm_shape(hosp_year_summaries) +
+  tm_polygons(col = "mean_income",
+              title = "Median Income") +
+  tm_layout(main.title = "The Median Income for California Counties") 
+
+
+asthma_prevalence_15_16 <- tm_shape(asthma_prev_spatial_2015_2016) +
   tm_polygons(col = "current_prevalence")
 
-tm_shape(asthma_prev_spatial_2017_2018) +
+asthma_prevalence_17_18 <- tm_shape(asthma_prev_spatial_2017_2018) +
   tm_polygons(col = "current_prevalence")
 
 ```
+
+
+## Attempting a GIF
+
+```{r}
+
+#HOSPITALIZATIONS
+hosp_ggplot <- ggplot() +
+  geom_sf(data = hosp_year_summaries, 
+          aes(fill = mean_hosp), col = 'black', size = 0.5) +
+  labs(title = "Hospitalization Rate from Asthma between \n 2015–2019 for California Counties") +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = 'right',
+        legend.direction = "vertical",
+        panel.border = element_blank(),
+        axis.text = element_blank()) +
+  theme(legend.position = c(1, 0.75),
+        legend.key.height = unit(0.3, "cm"),
+        legend.key.width = unit(0.3, "cm")) +
+  scale_fill_stepsn(colors = c("#fff0d6", 
+                               "#ffffb2", 
+                               "#fecc5c", 
+                               "#fd8d3c", 
+                               "#f03b20", 
+                               "#bd0026"),
+                    na.value = "grey50",
+                    guide = guide_colorbar(title = "Hospitalization Rate \n (per 100,000)"))
+
+
+
+
+#MEDIAN INCOME
+median_income_ggplot <- ggplot() +
+  geom_sf(data = hosp_year_summaries, 
+          aes(fill = mean_income), col = 'black', size = 0.5) +
+  labs(title = "Median Income for California Counties") +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = 'right',
+        legend.direction = "vertical",
+        panel.border = element_blank(),
+        axis.text = element_blank()) +
+  theme(legend.position = c(1, 0.75),
+        legend.key.height = unit(0.3, "cm"),
+        legend.key.width = unit(0.3, "cm")) +
+  scale_fill_stepsn(colors = c("#fff0d6", 
+                               "#ffffb2", 
+                               "#fecc5c", 
+                               "#fd8d3c", 
+                               "#f03b20", 
+                               "#bd0026"),
+                    na.value = "grey50",
+                    guide = guide_colorbar(title = "Median Income (in $1,000s)"))
+    
+
+#POPULATION DENSITY  
+pop_density_ggplot <- ggplot() +
+  geom_sf(data = hosp_year_summaries, 
+          aes(fill = log_pop_density), col = 'black', size = 0.5) +
+  labs(title = "Normalized (log transformed) Population \n Density in California Counties") +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = 'right',
+        legend.direction = "vertical",
+        panel.border = element_blank(),
+        axis.text = element_blank()) +
+  theme(legend.position = c(1, 0.75),
+        legend.key.height = unit(0.3, "cm"),
+        legend.key.width = unit(0.3, "cm")) +
+  scale_fill_stepsn(colors = c("#fff0d6", 
+                               "#ffffb2", 
+                               "#fecc5c", 
+                               "#fd8d3c", 
+                               "#f03b20", 
+                               "#bd0026"),
+                    na.value = "grey50",
+                    guide = guide_colorbar(title = "Log Population Density \n (per square mile)"))
+  
+
+# AQI
+
+max_aqi_ggplot <- ggplot() +
+  geom_sf(data = hosp_year_summaries, 
+          aes(fill = mean_max_aqi), col = 'black', size = 0.5) +
+  labs(title = "Average Maximum AQI from 2015-2019 \n for California Counties") +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = 'right',
+        legend.direction = "vertical",
+        panel.border = element_blank(),
+        axis.text = element_blank()) +
+  theme(legend.position = c(1, 0.75),
+        legend.key.height = unit(0.3, "cm"),
+        legend.key.width = unit(0.3, "cm")) +
+  scale_fill_stepsn(colors = c("#fff0d6", 
+                               "#ffffb2", 
+                               "#fecc5c", 
+                               "#fd8d3c", 
+                               "#f03b20", 
+                               "#bd0026"),
+                    na.value = "grey50",
+                    guide = guide_colorbar(title = "Maximum AQI"))
+
+# SMOKE PM 2.5
+
+mean_smoke_ggplot <- ggplot() +
+  geom_sf(data = hosp_year_summaries, 
+          aes(fill = mean_smoke), col = 'black', size = 0.5) +
+  labs(title = "Median PM 2.5 from Smoke \n for California Counties") +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = 'right',
+        legend.direction = "vertical",
+        panel.border = element_blank(),
+        axis.text = element_blank()) +
+  theme(legend.position = c(1, 0.75),
+        legend.key.height = unit(0.3, "cm"),
+        legend.key.width = unit(0.3, "cm")) +
+  scale_fill_stepsn(colors = c("#fff0d6", 
+                               "#ffffb2", 
+                               "#fecc5c", 
+                               "#fd8d3c", 
+                               "#f03b20", 
+                               "#bd0026"),
+                    na.value = "grey50",
+                    guide = guide_colorbar(title = "Mean PM 2.5 \n from Smoke"))
+
+
+
+
+#HOSP
+ggsave(filename = "hosp_map.png", plot=hosp_ggplot, 
+       width=6, height=4, units = "in")
+
+hosp_map_png <- image_read("hosp_map.png")
+
+
+
+#INCOME
+ggsave(filename = "median_income_map.png", plot=median_income_ggplot, 
+       width=6, height=4, units = "in")
+
+income_map_png <- image_read("median_income_map.png")
+
+
+
+#POP DENSITY
+ggsave(filename = "pop_density_map.png", plot=pop_density_ggplot, 
+       width=6, height=4, units = "in")
+
+density_map_png <- image_read("pop_density_map.png")
+
+
+#AQI
+ggsave(filename = "max_aqi_map.png", plot=max_aqi_ggplot, 
+       width=6, height=4, units = "in")
+
+aqi_map_png <- image_read("max_aqi_map.png")
+
+
+#SMOKE
+ggsave(filename = "mean_smoke_map.png", plot=mean_smoke_ggplot, 
+       width=6, height=4, units = "in")
+
+smoke_map_png <- image_read("mean_smoke_map.png")
+
+
+
+
+gif_images <- c(hosp_map_png, income_map_png, density_map_png, aqi_map_png, smoke_map_png)
+
+image_append(image_scale(gif_images, "x200"))
+
+
+asthma_animation <- image_animate(image_scale(gif_images, "400x400"), fps = 0.5, dispose = "previous")
+
+image_write(asthma_animation, "asthma_vars.gif")
+
+```
+
+
+
+
+
 
 $\alpha = 0.05$
 
@@ -406,11 +643,32 @@ hosp_2016_2018 <- hosp_full %>%
   filter(year == 2016 | year == 2018) %>%
   mutate(year = as.factor(year))
   
-t.test(hosp_per_100k ~ year, data = hosp_2016_2018)
+fire_test <- t.test(hosp_per_100k ~ year, data = hosp_2016_2018)
+
+tab_model(fire_test,
+          string.ci = c("Conf. Int (95%)"),
+          string.p = "P-value",
+          dv.labels = c("Hospitalization Rate"),
+          pred.labels = "2016 – 2018",
+          title = "Table 2: Hospitalization Rate and Wildfires: Welch Two Sample t-test")
+
+
+#testing to confirm which year is first 
+hosp_2016_2018 %>% 
+  filter(year == "2016") %>%
+  mutate(hosp_per_100k = as.numeric(hosp_per_100k)) %>%
+  summarise(mean = mean(hosp_per_100k, na.rm = TRUE))
+
+hosp_2016_2018 %>% 
+  filter(year == "2018") %>%
+  mutate(hosp_per_100k = as.numeric(hosp_per_100k)) %>%
+  summarise(mean = mean(hosp_per_100k, na.rm = TRUE))
+
+
 
 
 beeswarm_boxplot <- ggplot(data = hosp_2016_2018, mapping = aes(x = year, y = hosp_per_100k)) +
-  geom_beeswarm() + 
+  geom_beeswarm(color = "red", alpha = .5) + 
   geom_boxplot(alpha = 0.3) +
   theme_classic() +
   labs(x = "Year",
