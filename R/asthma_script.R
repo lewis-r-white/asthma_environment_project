@@ -163,23 +163,22 @@ MASS::stepAIC(full.lm, scope = list(lower = null.lm, upper = full.lm), direction
 asthma_mod <- lm(hosp_per_100k ~ log(max_aqi) + sqrt(mean_smokePM) + log(pop_density_sq_m) + median_income_in_thousands, data = hosp_full)
 
 asthma_hosp_table <- tab_model(asthma_mod,
-                               pred.labels = c("Intercept", "Log Max Aqi", "SQRT Mean Smoke", 
+                               pred.labels = c("Intercept", "Log Max AQI", "SQRT Mean Smoke", 
                                                "Log Pop Density", "Median Income (in $1000s)"),
                                dv.labels = c("Hospitalization Rate (per 100k)"),
                                string.ci = "Conf. Int (95%)",
                                string.p = "P-value",
                                title = "Table 1. Linear Model Results",
-                               digits = 4)
-
+                               digits = 3)
 
 
 
 
 #CHECKING PREDICTIONS
 
-final_model <- lm(hosp_per_100k ~ log(max_aqi) + median_income_in_thousands + log(pop_density_sq_m) + sqrt(mean_smokePM), data = hosp_full)
+asthma_mod <- lm(hosp_per_100k ~ log(max_aqi) + sqrt(mean_smokePM) + log(pop_density_sq_m) + median_income_in_thousands, data = hosp_full)
 
-predictions <- augment(final_model)
+predictions <- augment(asthma_mod)
 
 ggplot(data = predictions, mapping = aes(x = .fitted, y = hosp_per_100k)) +
   geom_point() +

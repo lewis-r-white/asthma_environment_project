@@ -317,9 +317,9 @@ MASS::stepAIC(full.lm, scope = list(lower = null.lm, upper = full.lm), direction
 
 ## Checking Predictions 
 ```{r}
-final_model <- lm(hosp_per_100k ~ log(max_aqi) + median_income_in_thousands + log(pop_density_sq_m) + sqrt(mean_smokePM), data = hosp_full)
+asthma_mod <- lm(hosp_per_100k ~ log(max_aqi) + sqrt(mean_smokePM) + log(pop_density_sq_m) + median_income_in_thousands, data = hosp_full)
 
-predictions <- augment(final_model)
+predictions <- augment(asthma_mod)
 
 ggplot(data = predictions, mapping = aes(x = .fitted, y = hosp_per_100k)) +
   geom_point() +
@@ -496,11 +496,10 @@ pop_density_ggplot <- ggplot() +
         axis.ticks.x = element_blank(),
         axis.ticks.y = element_blank(),
         panel.grid = element_blank(),
-        legend.position = 'right',
-        legend.direction = "vertical",
         panel.border = element_blank(),
-        axis.text = element_blank()) +
-  theme(legend.position = c(1, 0.75),
+        axis.text = element_blank(),
+        legend.direction = "vertical",
+        legend.position = c(1, 0.75),
         legend.key.height = unit(0.3, "cm"),
         legend.key.width = unit(0.3, "cm")) +
   scale_fill_stepsn(colors = c("#fff0d6", 
