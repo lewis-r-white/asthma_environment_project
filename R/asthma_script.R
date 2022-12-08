@@ -14,6 +14,7 @@ library(ggbeeswarm)
 library(ggpubr)
 library(sjPlot)
 library(magick)
+library(patchwork)
 
 
 rootdir <- ("/Users/lewiswhite/MEDS/eds_222/asthma_environment_project")
@@ -149,6 +150,85 @@ hosp_full <- left_join(hosp_clean, cali_aqi_clean) %>%
 
 
 
+# EXPLORATORY PLOTS CHECKING LINEARITY
+
+#log max aqi on percent hosp rate
+max_aqi_linearity <- ggplot(data = hosp_full, aes(x = log(max_aqi), y = hosp_per_100k)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Log Max AQI",
+       y = "Hospitalization Rate (per 100,000)",
+       title = "Checking linearity of log max AQI")
+
+max_aqi_mod <- lm(hosp_per_100k ~ log(max_aqi), data = hosp_full)
+
+res_max_aqi <- resid(max_aqi_mod)
+
+max_aqi_resid <- plot(fitted(max_aqi_mod), res_max_aqi) +
+  abline(0,0) +
+  title("Residual plot for max AQI") # appears fairly linear, although the residuals in the middle are more extreme than at the ends. Proceed with caution. 
+
+
+# pop density on hosp rate
+pop_density_linearity <- ggplot(data = hosp_full, aes(x = log(pop_density_sq_m), y = hosp_per_100k)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Log Population Density",
+       y = "Hospitalization Rate (per 100,000)",
+       title = "Checking linearity of log population density")
+
+pop_density_mod <- lm(hosp_per_100k ~ log(pop_density_sq_m), data = hosp_full)
+
+res_pop_density <- resid(pop_density_mod)
+
+pop_density_resid <- plot(fitted(pop_density_mod), res_pop_density) +
+  abline(0,0) +
+  title("Residual plot for log population density")
+
+
+
+## median income on hosp
+median_income_linearity <- ggplot(data = hosp_full, aes(x = median_income_in_thousands, y = hosp_per_100k)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Median Income (in 1000s)",
+       y = "Hospitalization Rate (per 100,000)",
+       title = "Checking linearity of Median Income")
+
+income_mod <- lm(hosp_per_100k ~ median_income_in_thousands, data = hosp_full)
+
+res_income <- resid(income_mod)
+
+median_income_resid <- plot(fitted(income_mod), res_income) +
+  abline(0,0) +
+  title("Residual plot for median income shows some light fanning") # a little bit of fanning ~ proceed with caution
+
+
+
+
+## mean PM 2.5 from fire
+mean_smoke_linearity <- ggplot(data = hosp_full, aes(x = sqrt(mean_smokePM), y = hosp_per_100k)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Square Root of Mean Smoke (PM 2.5)",
+       y = "Hospitalization Rate (per 100,000)",
+       title = "Checking linearity of Mean Smoke")
+
+smoke_mod <- lm(hosp_per_100k ~ sqrt(mean_smokePM), data = hosp_full)
+
+res_smoke <- resid(smoke_mod)
+
+mean_smoke_resid <- plot(fitted(smoke_mod), res_smoke) +
+  abline(0,0) +
+  title("Residual plot for mean smoke shows some light fanning") # a little bit of fanning ~ proceed with caution
+
+
+
+
+
+
+
+
 
 #MODELING THE DATA
 # stepwise multiple regression model
@@ -180,20 +260,14 @@ asthma_mod <- lm(hosp_per_100k ~ log(max_aqi) + sqrt(mean_smokePM) + log(pop_den
 
 predictions <- augment(asthma_mod)
 
-ggplot(data = predictions, mapping = aes(x = .fitted, y = hosp_per_100k)) +
+prediction_plot <- ggplot(data = predictions, mapping = aes(x = .fitted, y = hosp_per_100k)) +
   geom_point() +
   geom_abline(slope = 1, color = "red", lwd = 1) +
   xlim(20, 70) +
   annotate("text",
            x = 67, 
            y = 83, 
-           label = "Line of perfect",
-           color = "red",
-           size = 3.5) +
-  annotate("text",
-           x = 67,
-           y = 79,
-           label = "predictions",
+           label = "Line of perfect \n predictions",
            color = "red",
            size = 3.5) +
   labs(x = "Predicted Hospitalizations (per 100k)",
@@ -217,12 +291,13 @@ hosp_2016_2018 <- hosp_full %>%
 
 fire_test <- t.test(hosp_per_100k ~ year, data = hosp_2016_2018)
 
-tab_model(fire_test,
+fire_test_table <- tab_model(fire_test,
           string.ci = c("Conf. Int (95%)"),
           string.p = "P-value",
           dv.labels = c("Hospitalization Rate"),
           pred.labels = "2016 – 2018",
           title = "Table 2: Hospitalization Rate and Wildfires: Welch Two Sample t-test")
+
 
 
 #testing to confirm which year is first 
@@ -238,7 +313,7 @@ hosp_2016_2018 %>%
 
 
 
-
+#Creating a beeswarm plot with boxplot overlay to show distribution of county level mean hospitalization rates for 2016 and 2018. 
 beeswarm_boxplot <- ggplot(data = hosp_2016_2018, mapping = aes(x = year, y = hosp_per_100k)) +
   geom_beeswarm(color = "red", alpha = .5) + 
   geom_boxplot(alpha = 0.3) +

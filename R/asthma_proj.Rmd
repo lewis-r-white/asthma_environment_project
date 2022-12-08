@@ -193,57 +193,75 @@ plot(fitted(median_aqi_model), res) +
 
 #log max aqi on percent hosp rate
 ggplot(data = hosp_full, aes(x = log(max_aqi), y = hosp_per_100k)) +
-  geom_point()
+  geom_point() +
+  theme_classic() +
+  labs(x = "Log Max AQI",
+       y = "Hospitalization Rate (per 100,000)",
+       title = "Checking linearity of log max AQI")
 
 max_aqi_mod <- lm(hosp_per_100k ~ log(max_aqi), data = hosp_full)
 
 summary(max_aqi_mod)
 
-res <- resid(max_aqi_mod)
+res_max_aqi <- resid(max_aqi_mod)
 
-plot(fitted(max_aqi_mod), res) +
-  abline(0,0) # appears fairly linear, although the residuals in the middle are more extreme than at the ends. Proceed with caution. 
+plot(fitted(max_aqi_mod), res_max_aqi) +
+  abline(0,0) +
+  title("Residual plot for max AQI") # appears fairly linear, although the residuals in the middle are more extreme than at the ends. Proceed with caution. 
 
 
 # pop density on hosp rate
 ggplot(data = hosp_full, aes(x = log(pop_density_sq_m), y = hosp_per_100k)) +
-  geom_point()
+  geom_point() +
+  theme_classic() +
+  labs(x = "Log Population Density",
+       y = "Hospitalization Rate (per 100,000)",
+       title = "Checking linearity of log population density")
 
 pop_density_mod <- lm(hosp_per_100k ~ log(pop_density_sq_m), data = hosp_full)
 
-res <- resid(pop_density_mod)
+res_pop_density <- resid(pop_density_mod)
 
-plot(fitted(pop_density_mod), res) +
+plot(fitted(pop_density_mod), res_pop_density) +
   abline(0,0)
 
 
 
 ## median income on hosp
 ggplot(data = hosp_full, aes(x = median_income_in_thousands, y = hosp_per_100k)) +
-  geom_point()
+  geom_point() +
+  theme_classic() +
+  labs(x = "Median Income (in 1000s)",
+       y = "Hospitalization Rate (per 100,000)",
+       title = "Checking linearity of Median Income")
 
 income_mod <- lm(hosp_per_100k ~ median_income_in_thousands, data = hosp_full)
 
-res <- resid(income_mod)
+res_income <- resid(income_mod)
 
-plot(fitted(income_mod), res) +
+plot(fitted(income_mod), res_income) +
   abline(0,0)  # a little bit of fanning ~ proceed with caution
 
-hist(res)
+
 
 
 ## mean PM 2.5 from fire
 ggplot(data = hosp_full, aes(x = sqrt(mean_smokePM), y = hosp_per_100k)) +
-  geom_point()
+  geom_point() +
+  theme_classic() +
+  labs(x = "Square Root of Mean Smoke (PM 2.5)",
+       y = "Hospitalization Rate (per 100,000)",
+       title = "Checking linearity of Mean Smoke")
 
 smoke_mod <- lm(hosp_per_100k ~ sqrt(mean_smokePM), data = hosp_full)
 
 summary(smoke_mod)
 
-res <- resid(smoke_mod)
+res_smoke <- resid(smoke_mod)
 
-plot(fitted(smoke_mod), res) +
+plot(fitted(smoke_mod), res_smoke) +
   abline(0,0)  # a little bit of fanning ~ proceed with caution
+
 
 
 
@@ -615,9 +633,11 @@ gif_images <- c(hosp_map_png, income_map_png, density_map_png, aqi_map_png, smok
 image_append(image_scale(gif_images, "x200"))
 
 
-asthma_animation <- image_animate(image_scale(gif_images, "400x400"), fps = 0.5, dispose = "previous")
+asthma_animation <- image_animate(image_scale(gif_images, "1000x1000"), fps = 0.5, dispose = "previous")
 
-image_write(asthma_animation, "asthma_vars.gif")
+image_write(asthma_animation, "asthma.gif")
+
+asthma_animation
 
 ```
 
